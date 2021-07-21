@@ -122,6 +122,7 @@ def transform_valid(sample):
     trans = transforms.Compose([
         Pad(),
         # MaxMinNormalization(),
+        Random_Crop(),
         ToTensor()
     ])
 

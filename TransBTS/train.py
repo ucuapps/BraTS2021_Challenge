@@ -156,7 +156,7 @@ def main_worker():
 
     valid_list = os.path.join(args.root, args.valid_dir, args.valid_file)
     train_set = BraTS(train_list, train_root, args.mode)
-    valid_set = BraTS(valid_list, valid_root, args.mode)   # mode='test'
+    valid_set = BraTS(valid_list, valid_root, mode='valid')   # mode='test'
 
     logging.info('Samples for train = {}'.format(len(train_set)))
     logging.info('Samples for valid = {}'.format(len(valid_set)))
