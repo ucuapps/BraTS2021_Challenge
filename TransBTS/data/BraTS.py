@@ -158,6 +158,7 @@ class BraTS(Dataset):
             return sample['image'], sample['label']
         else:
             image = pkload(path + 'data_f32b0.pkl')
+            print(image.shape)
             image = np.pad(image, ((0, 0), (0, 0), (0, 5), (0, 0)), mode='constant')
             image = np.ascontiguousarray(image.transpose(3, 0, 1, 2))
             image = torch.from_numpy(image).float()

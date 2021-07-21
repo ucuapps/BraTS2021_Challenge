@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from models.TransBTS.Transformer import TransformerModel
-from models.TransBTS.PositionalEncoding import FixedPositionalEncoding,LearnedPositionalEncoding
+from models.TransBTS.PositionalEncoding import FixedPositionalEncoding,LearnedPositionalEncoding, MLPPositionalEncoding
 from models.TransBTS.Unet_skipconnection import Unet
 
 
@@ -47,6 +47,10 @@ class TransformerBTS(nn.Module):
             self.position_encoding = FixedPositionalEncoding(
                 self.embedding_dim,
             )
+        elif positional_encoding_type == 'mlp':
+            self.position_encoding = MLPPositionalEncoding(
+                self.embedding_dim
+            )
 
         self.pe_dropout = nn.Dropout(p=self.dropout_rate)
 
@@ -83,8 +87,6 @@ class TransformerBTS(nn.Module):
             x = self.bn(x)
             x = self.relu(x)
             x = self.conv_x(x)
-            x = x.permute(0, 2, 3, 4, 1).contiguous()
-            x = x.view(x.size(0), -1, self.embedding_dim)
 
         else:
             x = self.Unet(x)
@@ -105,6 +107,8 @@ class TransformerBTS(nn.Module):
         x = self.pe_dropout(x)
 
         # apply transformer
+        x = x.permute(0, 2, 3, 4, 1).contiguous()
+        x = x.view(x.size(0), -1, self.embedding_dim)
         x, intmd_x = self.transformer(x)
         x = self.pre_head_ln(x)
 
@@ -114,6 +118,8 @@ class TransformerBTS(nn.Module):
         raise NotImplementedError("Should be implemented in child class!!")
 
     def forward(self, x, auxillary_output_layers=[1, 2, 3, 4]):
+
+        self._input_shape = x.shape
 
         x1_1, x2_1, x3_1, encoder_output, intmd_encoder_outputs = self.encode(x)
 
@@ -140,11 +146,12 @@ class TransformerBTS(nn.Module):
         return tuple(0 for _ in kernel_size)
 
     def _reshape_output(self, x):
+        _, _, h, w, d = self._input_shape
         x = x.view(
             x.size(0),
-            int(self.img_dim / self.patch_dim),
-            int(self.img_dim / self.patch_dim),
-            int(self.img_dim / self.patch_dim),
+            int(h / self.patch_dim),
+            int(w / self.patch_dim),
+            int(d / self.patch_dim),
             self.embedding_dim,
         )
         x = x.permute(0, 4, 1, 2, 3).contiguous()
@@ -312,8 +319,6 @@ class DeBlock(nn.Module):
         x1 = x1 + x
 
         return x1
-
-
 
 
 def TransBTS(dataset='brats', _conv_repr=True, _pe_type="learned"):
