@@ -74,7 +74,7 @@ parser.add_argument('--weight_decay', default=1e-5, type=float)
 
 parser.add_argument('--amsgrad', default=True, type=bool)
 
-parser.add_argument('--criterion', default='softmax_dice', type=str)
+parser.add_argument('--criterion', default='softmax_diceCE', type=str)
 
 parser.add_argument('--num_class', default=4, type=int)
 
@@ -90,7 +90,7 @@ parser.add_argument('--batch_size', default=2, type=int)
 
 parser.add_argument('--start_epoch', default=0, type=int)
 
-parser.add_argument('--end_epoch', default=50, type=int)
+parser.add_argument('--end_epoch', default=80, type=int)
 
 parser.add_argument('--save_freq', default=5, type=int)
 
@@ -212,7 +212,7 @@ def main_worker():
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
 
             output = model(x)
-            output = torch.softmax(output, dim=1)
+            # output = torch.softmax(output, dim=1)
             loss, *_ = criterion(output, y)
 
             train_loss_history.append(loss.item())
@@ -233,7 +233,7 @@ def main_worker():
                 x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
 
                 output = model(x)
-                output = torch.softmax(output, dim=1)
+                # output = torch.softmax(output, dim=1)
                 loss, *_ = criterion(output, y)
 
                 valid_loss_history.append(loss.item())

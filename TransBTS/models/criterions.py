@@ -1,9 +1,9 @@
 import torch
-import logging
+import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 
-def expand_target(x, n_class,mode='softmax'):
+
+def expand_target(x, n_class, mode='softmax'):
     """
         Converts NxDxHxW label image to NxCxDxHxW, where each label is stored in a separate channel
         :param input: 4D input image (NxDxHxW)
@@ -25,6 +25,7 @@ def expand_target(x, n_class,mode='softmax'):
         xx[:, 2, :, :, :] = (x == 3)
     return xx.to(x.device)
 
+
 def flatten(tensor):
     """Flattens a given tensor such that the channel axis is first.
     The shapes are transformed as follows:
@@ -38,11 +39,12 @@ def flatten(tensor):
     # Flatten: (C, N, D, H, W) -> (C, N * D * H * W)
     return transposed.reshape(C, -1)
 
+
 def Dice(output, target, eps=1e-5):
     target = target.float()
     num = 2 * (output * target).sum()
     den = output.sum() + target.sum() + eps
-    return 1.0 - num/den
+    return 1.0 - num / den
 
 
 def softmax_dice(output, target):
@@ -56,7 +58,7 @@ def softmax_dice(output, target):
     loss2 = Dice(output[:, 2, ...], (target == 2).float())
     loss3 = Dice(output[:, 3, ...], (target == 4).float())
 
-    return loss1 + loss2 + loss3, 1-loss1.data, 1-loss2.data, 1-loss3.data
+    return loss1 + loss2 + loss3, 1 - loss1.data, 1 - loss2.data, 1 - loss3.data
 
 
 def softmax_dice2(output, target):
@@ -71,7 +73,31 @@ def softmax_dice2(output, target):
     loss2 = Dice(output[:, 2, ...], (target == 2).float())
     loss3 = Dice(output[:, 3, ...], (target == 4).float())
 
-    return loss1 + loss2 + loss3 + loss0, 1-loss1.data, 1-loss2.data, 1-loss3.data
+    return loss1 + loss2 + loss3 + loss0, 1 - loss1.data, 1 - loss2.data, 1 - loss3.data
+
+
+def softmax_diceCE(output, target, ce_weight=0.8):
+    '''
+    The dice & cross-entropy losses for using logits
+    :param output: (b, num_class, d, h, w)
+    :param target: (b, d, h, w)
+    :return:
+    '''
+    output = nn.Softmax(dim=1)(output)
+
+    loss0 = Dice(output[:, 0, ...], (target == 0).float())
+    loss1 = Dice(output[:, 1, ...], (target == 1).float())
+    loss2 = Dice(output[:, 2, ...], (target == 2).float())
+    loss3 = Dice(output[:, 3, ...], (target == 4).float())
+
+    ce_loss = nn.NLLLoss()
+    target[target == 4] = 3
+    target[target >= 5] = 0 # TODO: investigate this
+    ce_output = ce_loss(torch.log(output), target)
+
+    total_loss = (1 - ce_weight) * (loss0 + loss1 + loss2 + loss3) + \
+                 ce_weight * ce_output
+    return total_loss, ce_output.item(), (loss0 + loss1 + loss2 + loss3).item(), None
 
 
 def sigmoid_dice(output, target):
@@ -85,13 +111,13 @@ def sigmoid_dice(output, target):
     loss2 = Dice(output[:, 1, ...], (target == 2).float())
     loss3 = Dice(output[:, 2, ...], (target == 4).float())
 
-    return loss1 + loss2 + loss3, 1-loss1.data, 1-loss2.data, 1-loss3.data
+    return loss1 + loss2 + loss3, 1 - loss1.data, 1 - loss2.data, 1 - loss3.data
 
 
 def Generalized_dice(output, target, eps=1e-5, weight_type='square'):
-    if target.dim() == 4:  #(b, h, w, d)
-        target[target == 4] = 3  #transfer label 4 to 3
-        target = expand_target(target, n_class=output.size()[1])  #extend target from (b, h, w, d) to (b, c, h, w, d)
+    if target.dim() == 4:  # (b, h, w, d)
+        target[target == 4] = 3  # transfer label 4 to 3
+        target = expand_target(target, n_class=output.size()[1])  # extend target from (b, h, w, d) to (b, c, h, w, d)
 
     output = flatten(output)[1:, ...]  # transpose [N,4，H,W,D] -> [4，N,H,W,D] -> [3, N*H*W*D] voxels
     target = flatten(target)[1:, ...]  # [class, N*H*W*D]
@@ -112,9 +138,9 @@ def Generalized_dice(output, target, eps=1e-5, weight_type='square'):
     denominator = (output + target).sum(-1)
     denominator_sum = (denominator * class_weights).sum() + eps
 
-    loss1 = 2*intersect[0] / (denominator[0] + eps)
-    loss2 = 2*intersect[1] / (denominator[1] + eps)
-    loss3 = 2*intersect[2] / (denominator[2] + eps)
+    loss1 = 2 * intersect[0] / (denominator[0] + eps)
+    loss2 = 2 * intersect[1] / (denominator[1] + eps)
+    loss3 = 2 * intersect[2] / (denominator[2] + eps)
 
     return 1 - 2. * intersect_sum / denominator_sum, loss1, loss2, loss3
 
@@ -124,17 +150,17 @@ def Dual_focal_loss(output, target):
     loss2 = Dice(output[:, 2, ...], (target == 2).float())
     loss3 = Dice(output[:, 3, ...], (target == 4).float())
 
-    if target.dim() == 4:  #(b, h, w, d)
-        target[target == 4] = 3  #transfer label 4 to 3
-        target = expand_target(target, n_class=output.size()[1])  #extend target from (b, h, w, d) to (b, c, h, w, d)
+    if target.dim() == 4:  # (b, h, w, d)
+        target[target == 4] = 3  # transfer label 4 to 3
+        target = expand_target(target, n_class=output.size()[1])  # extend target from (b, h, w, d) to (b, c, h, w, d)
 
     target = target.permute(1, 0, 2, 3, 4).contiguous()
     output = output.permute(1, 0, 2, 3, 4).contiguous()
     target = target.view(4, -1)
     output = output.view(4, -1)
-    log = 1-(target - output)**2
+    log = 1 - (target - output) ** 2
 
-    return -(F.log_softmax((1-(target - output)**2), 0)).mean(), 1-loss1.data, 1-loss2.data, 1-loss3.data
+    return -(F.log_softmax((1 - (target - output) ** 2), 0)).mean(), 1 - loss1.data, 1 - loss2.data, 1 - loss3.data
 
 
 def mae(x_pred, x_true):
