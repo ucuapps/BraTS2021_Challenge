@@ -1,8 +1,12 @@
 import torch
 import torch.nn as nn
-from models.TransBTS.Transformer import TransformerModel
-from models.TransBTS.PositionalEncoding import FixedPositionalEncoding,LearnedPositionalEncoding, MLPPositionalEncoding
-from models.TransBTS.Unet_skipconnection import Unet
+
+import sys
+sys.path.append('/home/dobko/TransBTS')
+
+from models.TransBTS_2D.Transformer import TransformerModel
+from models.TransBTS_2D.PositionalEncoding import MLPPositionalEncoding2d, LearnedPositionalEncoding, FixedPositionalEncoding
+from models.TransBTS_2D.Unet_skipconnection import Unet
 
 
 class TransformerBTS(nn.Module):
@@ -18,7 +22,7 @@ class TransformerBTS(nn.Module):
         dropout_rate=0.0,
         attn_dropout_rate=0.0,
         conv_patch_representation=True,
-        positional_encoding_type="learned",
+        positional_encoding_type="mlp",
     ):
         super(TransformerBTS, self).__init__()
 
@@ -48,7 +52,7 @@ class TransformerBTS(nn.Module):
                 self.embedding_dim,
             )
         elif positional_encoding_type == 'mlp':
-            self.position_encoding = MLPPositionalEncoding(
+            self.position_encoding = MLPPositionalEncoding2d(
                 self.embedding_dim
             )
 
@@ -67,7 +71,7 @@ class TransformerBTS(nn.Module):
 
         if self.conv_patch_representation:
 
-            self.conv_x = nn.Conv3d(
+            self.conv_x = nn.Conv2d(
                 128,
                 self.embedding_dim,
                 kernel_size=3,
@@ -76,7 +80,7 @@ class TransformerBTS(nn.Module):
             )
 
         self.Unet = Unet(in_channels=4, base_channels=16, num_classes=4)
-        self.bn = nn.BatchNorm3d(128)
+        self.bn = nn.BatchNorm2d(128)
         self.relu = nn.ReLU(inplace=True)
 
 
@@ -107,7 +111,7 @@ class TransformerBTS(nn.Module):
         x = self.pe_dropout(x)
 
         # apply transformer
-        x = x.permute(0, 2, 3, 4, 1).contiguous()
+        x = x.permute(0, 2, 3, 1).contiguous()
         x = x.view(x.size(0), -1, self.embedding_dim)
         x, intmd_x = self.transformer(x)
         x = self.pre_head_ln(x)
@@ -146,15 +150,15 @@ class TransformerBTS(nn.Module):
         return tuple(0 for _ in kernel_size)
 
     def _reshape_output(self, x):
-        _, _, h, w, d = self._input_shape
+        _, _, h, w  = self._input_shape
         x = x.view(
             x.size(0),
             int(h / self.patch_dim),
             int(w / self.patch_dim),
-            int(d / self.patch_dim),
             self.embedding_dim,
         )
-        x = x.permute(0, 4, 1, 2, 3).contiguous()
+        # x = x.permute(0, 4, 1, 2, 3).contiguous()
+        x = x.permute(0, 3, 1, 2).contiguous()
 
         return x
 
@@ -173,7 +177,7 @@ class BTS(TransformerBTS):
         dropout_rate=0.0,
         attn_dropout_rate=0.0,
         conv_patch_representation=True,
-        positional_encoding_type="learned",
+        positional_encoding_type="mlp",
     ):
         super(BTS, self).__init__(
             img_dim=img_dim,
@@ -205,7 +209,7 @@ class BTS(TransformerBTS):
         self.DeUp2 = DeUp_Cat(in_channels=self.embedding_dim//16, out_channels=self.embedding_dim//32)
         self.DeBlock2 = DeBlock(in_channels=self.embedding_dim//32)
 
-        self.endconv = nn.Conv3d(self.embedding_dim // 32, 4, kernel_size=1)
+        self.endconv = nn.Conv2d(self.embedding_dim // 32, 4, kernel_size=1)
 
 
     def decode(self, x1_1, x2_1, x3_1, x, intmd_x, intmd_layers=[1, 2, 3, 4]):
@@ -242,12 +246,12 @@ class EnBlock1(nn.Module):
     def __init__(self, in_channels):
         super(EnBlock1, self).__init__()
 
-        self.bn1 = nn.BatchNorm3d(512 // 4)
+        self.bn1 = nn.BatchNorm2d(512 // 4) # BatchNorm3d
         self.relu1 = nn.ReLU(inplace=True)
-        self.bn2 = nn.BatchNorm3d(512 // 4)
+        self.bn2 = nn.BatchNorm2d(512 // 4) # BatchNorm3d
         self.relu2 = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv3d(in_channels, in_channels // 4, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv3d(in_channels // 4, in_channels // 4, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(in_channels, in_channels // 4, kernel_size=3, padding=1)  # nn.Conv3d
+        self.conv2 = nn.Conv2d(in_channels // 4, in_channels // 4, kernel_size=3, padding=1) # nn.Conv3d
 
     def forward(self, x):
         x1 = self.conv1(x)
@@ -264,12 +268,12 @@ class EnBlock2(nn.Module):
     def __init__(self, in_channels):
         super(EnBlock2, self).__init__()
 
-        self.conv1 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm3d(512 // 4)
+        self.conv1 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)  # Conv3d
+        self.bn1 = nn.BatchNorm2d(512 // 4)
         self.relu1 = nn.ReLU(inplace=True)
-        self.bn2 = nn.BatchNorm3d(512 // 4)
+        self.bn2 = nn.BatchNorm2d(512 // 4)
         self.relu2 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
 
     def forward(self, x):
         x1 = self.conv1(x)
@@ -286,9 +290,9 @@ class EnBlock2(nn.Module):
 class DeUp_Cat(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(DeUp_Cat, self).__init__()
-        self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=1)
-        self.conv2 = nn.ConvTranspose3d(out_channels, out_channels, kernel_size=2, stride=2)
-        self.conv3 = nn.Conv3d(out_channels*2, out_channels, kernel_size=1)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        self.conv2 = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2)
+        self.conv3 = nn.Conv2d(out_channels*2, out_channels, kernel_size=1)
 
     def forward(self, x, prev):
         x1 = self.conv1(x)
@@ -302,11 +306,11 @@ class DeBlock(nn.Module):
     def __init__(self, in_channels):
         super(DeBlock, self).__init__()
 
-        self.bn1 = nn.BatchNorm3d(in_channels)
+        self.bn1 = nn.BatchNorm2d(in_channels)
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm3d(in_channels)
+        self.conv1 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(in_channels)
         self.relu2 = nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -321,7 +325,7 @@ class DeBlock(nn.Module):
         return x1
 
 
-def TransBTS(dataset='brats', _conv_repr=True, _pe_type="learned"):
+def TransBTS2D(dataset='brats', _conv_repr=True, _pe_type="mlp"):
 
     if dataset.lower() == 'brats':
         img_dim = 128
@@ -350,11 +354,12 @@ def TransBTS(dataset='brats', _conv_repr=True, _pe_type="learned"):
 
 if __name__ == '__main__':
     with torch.no_grad():
-        import os
+        import os, sys
         os.environ['CUDA_VISIBLE_DEVICES'] = '0'
         cuda0 = torch.device('cuda:0')
-        x = torch.rand((1, 4, 128, 128, 128), device=cuda0)
-        _, model = TransBTS(dataset='brats', _conv_repr=True, _pe_type="learned")
+        # x = torch.rand((1, 4, 128, 128, 128), device=cuda0)
+        x = torch.rand((1, 4, 128, 128), device=cuda0)
+        _, model = TransBTS2D(dataset='brats', _conv_repr=True, _pe_type="mlp")
         model.cuda()
         y = model(x)
         print(y.shape)

@@ -44,6 +44,45 @@ def flatten(tensor):
     return transposed.reshape(C, -1)
 
 
+class DiceLoss(nn.Module):
+    def __init__(self, n_classes):
+        super(DiceLoss, self).__init__()
+        self.n_classes = n_classes
+
+    def _one_hot_encoder(self, input_tensor):
+        tensor_list = []
+        for i in range(self.n_classes):
+            temp_prob = input_tensor == i  # * torch.ones_like(input_tensor)
+            tensor_list.append(temp_prob.unsqueeze(1))
+        output_tensor = torch.cat(tensor_list, dim=1)
+        return output_tensor.float()
+
+    def _dice_loss(self, score, target):
+        target = target.float()
+        smooth = 1e-5
+        intersect = torch.sum(score * target)
+        y_sum = torch.sum(target * target)
+        z_sum = torch.sum(score * score)
+        loss = (2 * intersect + smooth) / (z_sum + y_sum + smooth)
+        loss = 1 - loss
+        return loss
+
+    def forward(self, inputs, target, weight=None, softmax=False):
+        if softmax:
+            inputs = torch.softmax(inputs, dim=1)
+        target = self._one_hot_encoder(target)
+        if weight is None:
+            weight = [1] * self.n_classes
+        assert inputs.size() == target.size(), 'predict {} & target {} shape do not match'.format(inputs.size(), target.size())
+        class_wise_dice = []
+        loss = 0.0
+        for i in range(0, self.n_classes):
+            dice = self._dice_loss(inputs[:, i], target[:, i])
+            class_wise_dice.append(1.0 - dice.item())
+            loss += dice * weight[i]
+        return loss / self.n_classes
+
+
 class HausdorffDTLoss(nn.Module):
     """Binary Hausdorff loss based on distance transform"""
 
@@ -127,8 +166,6 @@ def softmax_dice(output, target):
     :param target: (b, d, h, w)
     :return: softmax dice loss
     '''
-    output = nn.Softmax(dim=1)(output)
-
     loss1 = Dice(output[:, 1, ...], (target == 1).float())
     loss2 = Dice(output[:, 2, ...], (target == 2).float())
     loss3 = Dice(output[:, 3, ...], (target == 4).float())
@@ -136,27 +173,65 @@ def softmax_dice(output, target):
     return loss1 + loss2 + loss3, 1 - loss1.data, 1 - loss2.data, 1 - loss3.data
 
 
-def softmax_diceCE(output, target, ce_weight=0.5):
+def softmax_diceCE(output, target, ce_weight=0.8):
     '''
     The dice & cross-entropy losses for using logits
     :param output: (b, num_class, d, h, w)
     :param target: (b, d, h, w)
     :return:
     '''
-    output = nn.Softmax(dim=1)(output)
+    # output = torch.softmax(output, dim=1)
+    output = F.log_softmax(output, dim=1)
 
-    loss0 = Dice(output[:, 0, ...], (target == 0).float())
+    ce_loss = nn.NLLLoss(weight=torch.Tensor([1, 2, 1, 1]).to('cuda:0'))
+    target[target == 4] = 3
+    ce_output = ce_loss(output, target)
+
+    output = torch.exp(output)
+
+    # loss0 = Dice(output[:, 0, ...], (target == 0).float())
     loss1 = Dice(output[:, 1, ...], (target == 1).float())
     loss2 = Dice(output[:, 2, ...], (target == 2).float())
-    loss3 = Dice(output[:, 3, ...], (target == 4).float())
+    loss3 = Dice(output[:, 3, ...], (target == 3).float())
 
-    ce_loss = nn.NLLLoss()
-    target[target == 4] = 3
-    ce_output = ce_loss(torch.log(output), target)
-
-    total_loss = (1 - ce_weight) * (loss0 + loss1 + loss2 + loss3) + \
+    total_loss = (1 - ce_weight) * (loss1 + loss2 + loss3) + \
                  ce_weight * ce_output
-    return total_loss, ce_output.item(), (loss0 + loss1 + loss2 + loss3).item(), None
+    return total_loss, ce_output.item(), (loss1 + loss2 + loss3).item(), None
+
+
+def softmax_diceCE_Focal(output, target, ce_weight=0.6):
+    '''
+    The dice & cross-entropy losses for using logits
+    :param output: (b, num_class, d, h, w)
+    :param target: (b, d, h, w)
+    :return:
+    '''
+    # output = torch.softmax(output, dim=1)
+    output = F.log_softmax(output, dim=1)
+
+    ce_loss = nn.NLLLoss(weight=torch.Tensor([1, 2, 1, 1]).to('cuda:0'))
+    target[target == 4] = 3
+    ce_output = ce_loss(output, target)
+
+    output = torch.exp(output)
+
+    # loss0 = Dice(output[:, 0, ...], (target == 0).float())
+    loss1 = Dice(output[:, 1, ...], (target == 1).float())
+    loss2 = Dice(output[:, 2, ...], (target == 2).float())
+    loss3 = Dice(output[:, 3, ...], (target == 3).float())
+
+    # Focal loss
+    gamma = 2
+    pt = torch.exp(-ce_output)
+    focal_out = ((1 - pt) ** gamma * ce_output).mean()
+
+    dice_weight = (1 - ce_weight)/2
+    total_loss = dice_weight * (loss1 + loss2 + loss3) + \
+                 ce_weight * ce_output + \
+                 dice_weight * focal_out
+
+    return total_loss, ce_output.item(), (loss1 + loss2 + loss3).item(), focal_out.item()
+
 
 
 def softmax_diceCE_HD(output, target, ce_weight=0.4, hd_weight=0.1):
@@ -166,7 +241,6 @@ def softmax_diceCE_HD(output, target, ce_weight=0.4, hd_weight=0.1):
     :param target: (b, d, h, w)
     :return:
     '''
-    output = nn.Softmax(dim=1)(output)
 
     loss0 = Dice(output[:, 0, ...], (target == 0).float())
     loss1 = Dice(output[:, 1, ...], (target == 1).float())

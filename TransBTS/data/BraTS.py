@@ -75,7 +75,7 @@ class Random_rotate(object):
 
         angle = round(np.random.uniform(-10, 10), 2)
         image = ndimage.rotate(image, angle, axes=(0, 1), reshape=False)
-        label = ndimage.rotate(label, angle, axes=(0, 1), reshape=False)
+        label = ndimage.rotate(label, angle, axes=(0, 1), order=0, reshape=False)
 
         return {'image': image, 'label': label}
 
@@ -108,7 +108,7 @@ class ToTensor(object):
 def transform(sample):
     trans = transforms.Compose([
         Pad(),
-        Random_rotate(),  # time-consuming
+        # Random_rotate(),  # time-consuming
         Random_Crop(),
         Random_Flip(),
         Random_intencity_shift(),
@@ -117,12 +117,86 @@ def transform(sample):
 
     return trans(sample)
 
+# 2D code -----------------------------------------------------------------------
+
+class Pad2D(object):
+    def __call__(self, sample):
+        image = sample['image']
+        label = sample['label']
+
+        image = np.pad(image, ((0, 0), (0, 0), (0, 0)), mode='constant')
+        label = np.pad(label, ((0, 0), (0, 0)), mode='constant')
+        return {'image': image, 'label': label}
+
+
+class Random_Crop2D(object):
+    def __call__(self, sample):
+        image = sample['image']
+        label = sample['label']
+        H = random.randint(0, 240 - 128)
+        W = random.randint(0, 240 - 128)
+
+        image = image[H: H + 128, W: W + 128, ...]
+        label = label[..., H: H + 128, W: W + 128]
+
+        return {'image': image, 'label': label}
+
+
+class Random_Flip2D(object):
+    def __call__(self, sample):
+        image = sample['image']
+        label = sample['label']
+        if random.random() < 0.5:
+            image = np.flip(image, 0)
+            label = np.flip(label, 0)
+        if random.random() < 0.5:
+            image = np.flip(image, 1)
+            label = np.flip(label, 1)
+
+        return {'image': image, 'label': label}
+
+
+class ToTensor2D(object):
+    """Convert ndarrays in sample to Tensors."""
+    def __call__(self, sample):
+        image = sample['image']
+        if image.shape[0] == 1:
+            image = np.ascontiguousarray(image.squeeze(0).transpose(2, 0, 1))
+        else:
+            image = np.ascontiguousarray(image.transpose(2, 0, 1))
+        label = sample['label']
+        label = np.ascontiguousarray(label)
+
+        image = torch.from_numpy(image).float()
+        label = torch.from_numpy(label).long()
+
+        return {'image': image, 'label': label}
+
+
+def transform2d(sample):
+    trans = transforms.Compose([
+        Pad2D(),
+        Random_Crop2D(),
+        Random_Flip2D(),
+        Random_intencity_shift(),
+        ToTensor2D()
+    ])
+
+    return trans(sample)
+
+
+def transform_valid2D(sample):
+    trans = transforms.Compose([
+        Pad2D(),
+        ToTensor2D()
+    ])
+
+    return trans(sample)
+
 
 def transform_valid(sample):
     trans = transforms.Compose([
         Pad(),
-        # MaxMinNormalization(),
-        Random_Crop(),
         ToTensor()
     ])
 
@@ -130,7 +204,7 @@ def transform_valid(sample):
 
 
 class BraTS(Dataset):
-    def __init__(self, list_file, root='', mode='train'):
+    def __init__(self, list_file, root='', mode='train', return_names=False):
         self.lines = []
         paths, names = [], []
         with open(list_file) as f:
@@ -145,24 +219,31 @@ class BraTS(Dataset):
         self.names = names
         self.paths = paths
 
+        self.return_names = return_names
+
     def __getitem__(self, item):
         path = self.paths[item]
         if self.mode == 'train':
             image, label = pkload(path + 'data_f32b0.pkl')
             sample = {'image': image, 'label': label}
             sample = transform(sample)
-            return sample['image'], sample['label']
+            result = [sample['image'], sample['label']]
         elif self.mode == 'valid':
             image, label = pkload(path + 'data_f32b0.pkl')
             sample = {'image': image, 'label': label}
             sample = transform_valid(sample)
-            return sample['image'], sample['label']
+            result = [sample['image'], sample['label']]
         else:
             image = pkload(path + 'data_f32b0.pkl')
             image = np.pad(image, ((0, 0), (0, 0), (0, 5), (0, 0)), mode='constant')
             image = np.ascontiguousarray(image.transpose(3, 0, 1, 2))
             image = torch.from_numpy(image).float()
-            return image
+            result = [image]
+
+        if self.return_names:
+            result.append(self.names[item])
+
+        return result
 
     def __len__(self):
         return len(self.names)
@@ -170,5 +251,35 @@ class BraTS(Dataset):
     def collate(self, batch):
         return [torch.cat(v) for v in zip(*batch)]
 
+
+class BraTS2D(Dataset):
+    def __init__(self, mode='train', return_names=False):
+        self.data_path = '/home/dobko/datasets/BraTS2021/{}_2d'.format(mode)
+        self.imgs_paths = os.listdir(os.path.join(self.data_path, 'imgs'))
+        self.return_names = return_names
+        self.mode = mode
+
+    def __getitem__(self, item):
+        im_name = self.imgs_paths[item].split('/')[-1]
+        image = np.load(os.path.join(self.data_path, 'imgs', im_name))
+        label = np.load(os.path.join(self.data_path, 'lbls', im_name))
+        sample = {'image': image, 'label': label}
+
+        if self.mode == 'train':
+            sample = transform2d(sample)
+        elif self.mode == 'val':
+            sample = transform_valid2D(sample)
+        result = [sample['image'], sample['label']]
+
+        if self.return_names:
+            result.append(im_name)
+
+        return result
+
+    def __len__(self):
+        return len(self.imgs_paths)
+
+    def collate(self, batch):
+        return [torch.cat(v) for v in zip(*batch)]
 
 
