@@ -4,6 +4,8 @@ from models.TransBTS.Transformer import TransformerModel
 from models.TransBTS.PositionalEncoding import FixedPositionalEncoding,LearnedPositionalEncoding, MLPPositionalEncoding
 from models.TransBTS.Unet_skipconnection import Unet
 
+from models.TransBTS_channel_separable.channel_separable_conv import ChannelSeparableConv3d, ChannelSeparableConvTranspose3d
+
 
 class TransformerBTS(nn.Module):
     def __init__(
@@ -67,7 +69,7 @@ class TransformerBTS(nn.Module):
 
         if self.conv_patch_representation:
 
-            self.conv_x = nn.Conv3d(
+            self.conv_x = ChannelSeparableConv3d(
                 128,
                 self.embedding_dim,
                 kernel_size=3,
@@ -247,8 +249,8 @@ class EnBlock1(nn.Module):
         self.relu1 = nn.ReLU(inplace=True)
         self.bn2 = nn.BatchNorm3d(512 // 4)
         self.relu2 = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv3d(in_channels, in_channels // 4, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv3d(in_channels // 4, in_channels // 4, kernel_size=3, padding=1)
+        self.conv1 = ChannelSeparableConv3d(in_channels, in_channels // 4, kernel_size=3, padding=1)
+        self.conv2 = ChannelSeparableConv3d(in_channels // 4, in_channels // 4, kernel_size=3, padding=1)
 
     def forward(self, x):
         x1 = self.conv1(x)
@@ -265,12 +267,12 @@ class EnBlock2(nn.Module):
     def __init__(self, in_channels):
         super(EnBlock2, self).__init__()
 
-        self.conv1 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.conv1 = ChannelSeparableConv3d(in_channels, in_channels, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm3d(512 // 4)
         self.relu1 = nn.ReLU(inplace=True)
         self.bn2 = nn.BatchNorm3d(512 // 4)
         self.relu2 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.conv2 = ChannelSeparableConv3d(in_channels, in_channels, kernel_size=3, padding=1)
 
     def forward(self, x):
         x1 = self.conv1(x)
@@ -288,7 +290,7 @@ class DeUp_Cat(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(DeUp_Cat, self).__init__()
         self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=1)
-        self.conv2 = nn.ConvTranspose3d(out_channels, out_channels, kernel_size=2, stride=2)
+        self.conv2 = ChannelSeparableConvTranspose3d(out_channels, out_channels, kernel_size=2, stride=2)
         self.conv3 = nn.Conv3d(out_channels*2, out_channels, kernel_size=1)
 
     def forward(self, x, prev):
@@ -305,8 +307,8 @@ class DeBlock(nn.Module):
 
         self.bn1 = nn.BatchNorm3d(in_channels)
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.conv1 = ChannelSeparableConv3d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.conv2 = ChannelSeparableConv3d(in_channels, in_channels, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm3d(in_channels)
         self.relu2 = nn.ReLU(inplace=True)
 
@@ -355,7 +357,7 @@ if __name__ == '__main__':
         os.environ['CUDA_VISIBLE_DEVICES'] = '0'
         cuda0 = torch.device('cuda:0')
         x = torch.rand((1, 4, 128, 128, 128), device=cuda0)
-        _, model = TransBTS(dataset='brats', _conv_repr=True, _pe_type="learned")
+        _, model = TransBTS(dataset='brats', _conv_repr=True, _pe_type="mlp")
         model.cuda()
         y = model(x)
         print(y.shape)

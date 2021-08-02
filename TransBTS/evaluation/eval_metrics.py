@@ -17,7 +17,7 @@ def parse_args():
     parser.add_argument('--valid_dir', default='', type=str)
     parser.add_argument('--valid_file', default='valid.txt', type=str)
     parser.add_argument('--pred_dir',
-                        default='/home/ostapvinianskyi/projects/BraTS2021_Challenge/TransBTS/checkpoint/TransBTS2021-07-21-13:09:15/model_epoch_n29_prediction',
+                        default='/home/ostapvinianskyi/projects/BraTS2021_Challenge/TransBTS/checkpoint/TransBTS2021-07-28-23:12:38/model_epoch_n149_prediction',
                         type=str)
 
     parser.add_argument('--num_workers', default=20, type=int)
@@ -43,7 +43,7 @@ def run_case(pred, gt, num_classes=4):
     metric_i = []
     for i in range(1, num_classes):
         metric_i.append(calculate_metric_percase(pred == i, gt == i))
-    return np.mean(np.array(metric_i), axis=0)
+    return np.array(metric_i)
 
 
 def main():
@@ -66,10 +66,16 @@ def main():
         for i, future in enumerate(cf.as_completed(fs)):
             result = future.result()
             results.append(result)
-            print(f'[{i + 1}/{len(fs)}] Mean Dice: {result[0]}, HD@95: {result[1]}')
+            mean_result = np.mean(result, axis=0)
+            print(f'[{i + 1}/{len(fs)}] Mean Dice: {mean_result[0]}, HD@95: {mean_result[1]}')
 
-        results = np.array(results).mean(axis=0)
-        print(f'Val Mean Dice: {results[0]}, Val HD@95: {results[1]}')
+        results_per_class = np.array(results).mean(axis=0)
+        mean_results = results_per_class.mean(axis=0)
+        print(
+            f'Val Mean Dice: {mean_results[0]:.4}, Val HD@95: {mean_results[1]:.4}\n'
+            f'1: Dice={results_per_class[0, 0]:.4}, HD@95={results_per_class[0, 1]:.4}\n'
+            f'2: Dice={results_per_class[1, 0]:.4}, HD@95={results_per_class[1, 1]:.4}\n'
+            f'3: Dice={results_per_class[2, 0]:.4}, HD@95={results_per_class[2, 1]:.4}\n')
 
 
 if __name__ == '__main__':

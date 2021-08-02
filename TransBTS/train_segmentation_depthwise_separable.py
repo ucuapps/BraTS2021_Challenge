@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 
 from data.BraTS import BraTS
 from models import criterions
-from models.TransBTS.TransBTS_downsample8x_skipconnection import TransBTS
+from models.TransBTS_channel_separable.TransBTS_downsample8x_skipconnection import TransBTS
 
 local_time = time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())
 
@@ -43,9 +43,9 @@ parser.add_argument('--valid_dir', default='.', type=str)
 
 parser.add_argument('--mode', default='train', type=str)
 
-parser.add_argument('--train_file', default='trainval.txt', type=str)
+parser.add_argument('--train_file', default='train.txt', type=str)
 
-parser.add_argument('--valid_file', default='dummy.txt', type=str)
+parser.add_argument('--valid_file', default='valid.txt', type=str)
 
 parser.add_argument('--dataset', default='brats', type=str)
 
@@ -68,7 +68,7 @@ parser.add_argument('--crop_D', default=128, type=int)
 parser.add_argument('--output_D', default=155, type=int)
 
 # Training Information
-parser.add_argument('--lr', default=[0.0001, 0.0005], type=list)
+parser.add_argument('--lr', default=[0.0005, 0.0005], type=list)
 
 parser.add_argument('--weight_decay', default=1e-5, type=float)
 
@@ -90,9 +90,9 @@ parser.add_argument('--batch_size', default=2, type=int)
 
 parser.add_argument('--start_epoch', default=0, type=int)
 
-parser.add_argument('--end_epoch', default=500, type=int)
+parser.add_argument('--end_epoch', default=80, type=int)
 
-parser.add_argument('--save_freq', default=50, type=int)
+parser.add_argument('--save_freq', default=5, type=int)
 
 parser.add_argument('--grad_accum_steps', default=8, type=int)
 
@@ -103,10 +103,10 @@ parser.add_argument('--resume_path',
 parser.add_argument('--resume', default=False, type=bool)
 
 parser.add_argument('--pretrained_encoder_path',
-                    default='/home/ostapvinianskyi/projects/BraTS2021_Challenge/TransBTS/checkpoint/autoencoderbig__learned_pe__mae/model_epoch_last.pth',
+                    default='/home/ostapvinianskyi/projects/BraTS2021_Challenge/TransBTS/checkpoint/autoencoder__learned_pe__mae/model_epoch_last.pth',
                     type=str)
 
-parser.add_argument('--pretrained_encoder', default=True, type=bool)
+parser.add_argument('--pretrained_encoder', default=False, type=bool)
 
 args = parser.parse_args()
 
@@ -125,18 +125,6 @@ def split_params(model):
         else:
             g2.append(param)
     return g1, g2
-
-
-def clip_gradients(model, clip):
-    norms = []
-    for name, p in model.named_parameters():
-        if p.grad is not None:
-            param_norm = p.grad.data.norm(2)
-            norms.append(param_norm.item())
-            clip_coef = clip / (param_norm + 1e-6)
-            if clip_coef < 1:
-                p.grad.data.mul_(clip_coef)
-    return norms
 
 
 def main_worker():
@@ -215,7 +203,6 @@ def main_worker():
 
     fp16_scaler = torch.cuda.amp.GradScaler()
 
-
     for epoch in range(args.start_epoch, args.end_epoch):
         setproctitle.setproctitle('{}: {}/{}'.format(args.user, epoch + 1, args.end_epoch))
         start_epoch = time.time()
@@ -226,22 +213,22 @@ def main_worker():
             x, y = data
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
 
-            with torch.cuda.amp.autocast(fp16_scaler is not None):
-                output = model(x)
-                # output = torch.softmax(output, dim=1)
-                loss, *_ = criterion(output, y)
+            # with torch.cuda.amp.autocast(fp16_scaler is not None):
+            output = model(x)
+            # output = torch.softmax(output, dim=1)
+            loss, *_ = criterion(output, y)
 
             train_loss_history.append(loss.item())
             logging.info('Epoch: {}_Iter:{}  loss: {:.5f}'
                          .format(epoch, i, loss.item()))
 
-            # loss.backward()
-            fp16_scaler.scale(loss).backward()
+            # fp16_scaler.scale(loss).backward()
+            loss.backward()
 
             if (i + 1) % args.grad_accum_steps == 0:
-                # optimizer.step()
-                fp16_scaler.step(optimizer)
-                fp16_scaler.update()
+                optimizer.step()
+                # fp16_scaler.step(optimizer)
+                # fp16_scaler.update()
                 optimizer.zero_grad()
 
         with torch.no_grad():
@@ -251,7 +238,7 @@ def main_worker():
                 x, y = data
                 x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
 
-                output = model(x)
+                # output = model(x)
                 # output = torch.softmax(output, dim=1)
                 loss, *_ = criterion(output, y)
 

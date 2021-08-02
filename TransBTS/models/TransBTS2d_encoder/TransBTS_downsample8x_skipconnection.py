@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
-from models.TransBTS.Transformer import TransformerModel
-from models.TransBTS.PositionalEncoding import FixedPositionalEncoding,LearnedPositionalEncoding, MLPPositionalEncoding
-from models.TransBTS.Unet_skipconnection import Unet
+import torch.nn.functional as F
+from models.TransBTS2d_encoder.Transformer import TransformerModel
+from models.TransBTS2d_encoder.PositionalEncoding import FixedPositionalEncoding,LearnedPositionalEncoding, MLPPositionalEncoding
+from models.TransBTS2d_encoder.Unet_skipconnection import Unet
 
 
 class TransformerBTS(nn.Module):
@@ -76,23 +77,46 @@ class TransformerBTS(nn.Module):
             )
 
         self.Unet = Unet(in_channels=4, base_channels=16, num_classes=4)
+
+        self.conv_depthsep2 = nn.Conv3d(32, 32, kernel_size=(1, 1, 3), stride=(1, 1, 2), padding=(0, 0, 1))
+        self.conv_depthsep3 = nn.Sequential(
+            nn.Conv3d(64, 64, kernel_size=(1, 1, 3), stride=(1, 1, 2), padding=(0, 0, 1)),
+            nn.Conv3d(64, 64, kernel_size=(1, 1, 3), stride=(1, 1, 2), padding=(0, 0, 1))
+        )
+        self.conv_depthsep4 = nn.Sequential(
+            nn.Conv3d(128, 128, kernel_size=(1, 1, 3), stride=(1, 1, 2), padding=(0, 0, 1)),
+            nn.Conv3d(128, 128, kernel_size=(1, 1, 3), stride=(1, 1, 2), padding=(0, 0, 1)),
+            nn.Conv3d(128, 128, kernel_size=(1, 1, 3), stride=(1, 1, 2), padding=(0, 0, 1)),
+        )
+
         self.bn = nn.BatchNorm3d(128)
-        self.gelu = nn.GELU()
+        self.relu = nn.ReLU(inplace=True)
 
 
     def encode(self, x):
+        b, c, h, w, d = x.size()
         if self.conv_patch_representation:
             # combine embedding with conv patch distribution
+            x = x.permute(0, 4, 1, 2, 3).contiguous().view(-1, c, h, w)
             x1_1, x2_1, x3_1, x = self.Unet(x)
 
+            x1_1 = x1_1.view(b, d, -1, h, w).permute(0, 2, 3, 4, 1).contiguous()
+            x2_1 = x2_1.view(b, d, -1, h // 2, w // 2).permute(0, 2, 3, 4, 1).contiguous()
+            x3_1 = x3_1.view(b, d, -1, h // 4, w // 4).permute(0, 2, 3, 4, 1).contiguous()
+            x = x.view(b, d, -1, h // 8, w // 8).permute(0, 2, 3, 4, 1).contiguous()
+
+            x2_1 = self.conv_depthsep2(x2_1)
+            x3_1 = self.conv_depthsep3(x3_1)
+            x = self.conv_depthsep4(x)
+
             x = self.bn(x)
-            x = self.gelu(x)
+            x = self.relu(x)
             x = self.conv_x(x)
 
         else:
             x = self.Unet(x)
             x = self.bn(x)
-            x = self.gelu(x)
+            x = self.relu(x)
             x = (
                 x.unfold(2, 2, 2)
                 .unfold(3, 2, 2)
@@ -192,6 +216,8 @@ class BTS(TransformerBTS):
 
         self.num_classes = num_classes
 
+        self.Softmax = nn.Softmax(dim=1)
+
         self.Enblock8_1 = EnBlock1(in_channels=self.embedding_dim)
         self.Enblock8_2 = EnBlock2(in_channels=self.embedding_dim // 4)
 
@@ -234,27 +260,27 @@ class BTS(TransformerBTS):
         y2 = self.DeBlock2(y2)
 
         y = self.endconv(y2)      # (1, 4, 128, 128, 128)
+        # y = self.Softmax(y)
         return y
 
 class EnBlock1(nn.Module):
     def __init__(self, in_channels):
         super(EnBlock1, self).__init__()
 
-        self.conv1 = nn.Conv3d(in_channels, in_channels // 4, kernel_size=3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm3d(512 // 4)
-        self.gelu1 = nn.GELU()
-
-        self.conv2 = nn.Conv3d(in_channels // 4, in_channels // 4, kernel_size=3, padding=1, bias=False)
+        self.relu1 = nn.ReLU(inplace=True)
         self.bn2 = nn.BatchNorm3d(512 // 4)
-        self.gelu2 = nn.GELU()
+        self.relu2 = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv3d(in_channels, in_channels // 4, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv3d(in_channels // 4, in_channels // 4, kernel_size=3, padding=1)
 
     def forward(self, x):
         x1 = self.conv1(x)
         x1 = self.bn1(x1)
-        x1 = self.gelu1(x1)
+        x1 = self.relu1(x1)
         x1 = self.conv2(x1)
         x1 = self.bn2(x1)
-        x1 = self.gelu2(x1)
+        x1 = self.relu2(x1)
 
         return x1
 
@@ -263,21 +289,20 @@ class EnBlock2(nn.Module):
     def __init__(self, in_channels):
         super(EnBlock2, self).__init__()
 
-        self.conv1 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+        self.conv1 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm3d(512 // 4)
-        self.gelu1 = nn.GELU()
-
-        self.conv2 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+        self.relu1 = nn.ReLU(inplace=True)
         self.bn2 = nn.BatchNorm3d(512 // 4)
-        self.gelu2 = nn.GELU()
+        self.relu2 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
 
     def forward(self, x):
         x1 = self.conv1(x)
         x1 = self.bn1(x1)
-        x1 = self.gelu1(x1)
+        x1 = self.relu1(x1)
         x1 = self.conv2(x1)
         x1 = self.bn2(x1)
-        x1 = self.gelu2(x1)
+        x1 = self.relu2(x1)
         x1 = x1 + x
 
         return x1
@@ -301,30 +326,21 @@ class DeUp_Cat(nn.Module):
 class DeBlock(nn.Module):
     def __init__(self, in_channels):
         super(DeBlock, self).__init__()
-        self.conv1 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm3d(in_channels)
-        self.gelu1 = nn.GELU()
 
-        self.conv2 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm3d(in_channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm3d(in_channels)
-        self.gelu2 = nn.GELU()
-        # added
-        self.conv3 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
-        self.bn3 = nn.BatchNorm3d(in_channels)
-        self.gelu3 = nn.GELU()
+        self.relu2 = nn.ReLU(inplace=True)
 
     def forward(self, x):
         x1 = self.conv1(x)
         x1 = self.bn1(x1)
-        x1 = self.gelu1(x1)
+        x1 = self.relu1(x1)
         x1 = self.conv2(x1)
         x1 = self.bn2(x1)
-        x1 = self.gelu2(x1)
-        # added
-        x1 = self.conv3(x1)
-        x1 = self.bn3(x1)
-        x1 = self.gelu3(x1)
-        # added
+        x1 = self.relu2(x1)
         x1 = x1 + x
 
         return x1
@@ -363,7 +379,7 @@ if __name__ == '__main__':
         os.environ['CUDA_VISIBLE_DEVICES'] = '0'
         cuda0 = torch.device('cuda:0')
         x = torch.rand((1, 4, 128, 128, 128), device=cuda0)
-        _, model = TransBTS(dataset='brats', _conv_repr=True, _pe_type="learned")
+        _, model = TransBTS(dataset='brats', _conv_repr=True, _pe_type="mlp")
         model.cuda()
         y = model(x)
         print(y.shape)

@@ -23,10 +23,9 @@ def parse_args():
     parser.add_argument('--valid_dir', default='', type=str)
     parser.add_argument('--valid_file', default='valid.txt', type=str)
     parser.add_argument('--weights_path',
-                        default='/home/ostapvinianskyi/projects/BraTS2021_Challenge/TransBTS/checkpoint/TransBTS2021-07-21-13:09:15/model_epoch_n29.pth',
+                        default='/home/ostapvinianskyi/projects/BraTS2021_Challenge/TransBTS/checkpoint/TransBTS2021-07-28-23:12:38/model_epoch_n149.pth',
                         type=str)
     parser.add_argument('--gpu', default='0', type=str)
-    parser.add_argument('--num_workers', default=2, type=int)
 
     args = parser.parse_args()
     return args

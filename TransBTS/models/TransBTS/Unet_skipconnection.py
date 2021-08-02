@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 
+
 # adapt from https://github.com/MIC-DKFZ/BraTS2017
 
 
@@ -15,7 +16,6 @@ def normalization(planes, norm='gn'):
     else:
         raise ValueError('normalization type {} is not supported'.format(norm))
     return m
-
 
 
 class InitConv(nn.Module):
@@ -56,6 +56,49 @@ class EnBlock(nn.Module):
         return y
 
 
+class SEEnBlock(nn.Module):
+    def __init__(self, in_channels, norm='gn'):
+        super(SEEnBlock, self).__init__()
+        self.bn1 = normalization(in_channels, norm=norm)
+        self.gelu1 = nn.GELU()
+        self.conv1 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+
+        self.bn2 = normalization(in_channels, norm=norm)
+        self.gelu2 = nn.GELU()
+        self.conv2 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1, bias=False)
+
+        self.bn3 = normalization(in_channels, norm=norm)
+        self.gelu3 = nn.GELU()
+        self.conv3 = nn.Conv3d(in_channels, in_channels, kernel_size=3, padding=1, bias=True)
+
+        self.se = nn.Sequential(
+            nn.Linear(in_channels, in_channels // 2),
+            nn.GELU(),
+            nn.Linear(in_channels // 2, in_channels)
+        )
+
+    def forward(self, x):
+        x1 = self.bn1(x)
+        x1 = self.gelu1(x1)
+        x1 = self.conv1(x1)
+        y = self.bn2(x1)
+        y = self.gelu2(y)
+        y = self.conv2(y)
+        #added
+        y = self.bn3(y)
+        y = self.gelu3(y)
+        y = self.conv3(y)
+
+        y_squeeze = y.mean(dim=(2, 3, 4))
+        y_squeeze = self.se(y_squeeze)
+        se_weights = torch.sigmoid(y_squeeze)[..., None, None, None]
+        y = y * se_weights
+
+        y = y + x
+
+        return y
+
+
 class EnDown(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(EnDown, self).__init__()
@@ -67,40 +110,45 @@ class EnDown(nn.Module):
         return y
 
 
-
 class Unet(nn.Module):
     def __init__(self, in_channels=4, base_channels=16, num_classes=4):
         super(Unet, self).__init__()
 
         self.InitConv = InitConv(in_channels=in_channels, out_channels=base_channels, dropout=0.2)
-        self.EnBlock1 = EnBlock(in_channels=base_channels)
-        self.EnDown1 = EnDown(in_channels=base_channels, out_channels=base_channels*2)
 
-        self.EnBlock2_1 = EnBlock(in_channels=base_channels*2)
-        self.EnBlock2_2 = EnBlock(in_channels=base_channels*2)
-        self.EnDown2 = EnDown(in_channels=base_channels*2, out_channels=base_channels*4)
+        self.EnBlock1 = SEEnBlock(in_channels=base_channels)
 
-        self.EnBlock3_1 = EnBlock(in_channels=base_channels * 4)
-        self.EnBlock3_2 = EnBlock(in_channels=base_channels * 4)
-        self.EnDown3 = EnDown(in_channels=base_channels*4, out_channels=base_channels*8)
+        self.EnDown1 = EnDown(in_channels=base_channels, out_channels=base_channels * 2)
 
-        self.EnBlock4_1 = EnBlock(in_channels=base_channels * 8)
-        self.EnBlock4_2 = EnBlock(in_channels=base_channels * 8)
-        self.EnBlock4_3 = EnBlock(in_channels=base_channels * 8)
-        self.EnBlock4_4 = EnBlock(in_channels=base_channels * 8)
+        self.EnBlock2_1 = SEEnBlock(in_channels=base_channels * 2)
+        self.EnBlock2_2 = SEEnBlock(in_channels=base_channels * 2)
+
+        self.EnDown2 = EnDown(in_channels=base_channels * 2, out_channels=base_channels * 4)
+
+        self.EnBlock3_1 = SEEnBlock(in_channels=base_channels * 4)
+        self.EnBlock3_2 = SEEnBlock(in_channels=base_channels * 4)
+
+        self.EnDown3 = EnDown(in_channels=base_channels * 4, out_channels=base_channels * 8)
+
+        self.EnBlock4_1 = SEEnBlock(in_channels=base_channels * 8)
+        self.EnBlock4_2 = SEEnBlock(in_channels=base_channels * 8)
+        self.EnBlock4_3 = SEEnBlock(in_channels=base_channels * 8)
+        self.EnBlock4_4 = SEEnBlock(in_channels=base_channels * 8)
 
     def forward(self, x):
-        x = self.InitConv(x)       # (1, 16, 128, 128, 128)
+        x = self.InitConv(x)  # (1, 16, 128, 128, 128)
 
         x1_1 = self.EnBlock1(x)
         x1_2 = self.EnDown1(x1_1)  # (1, 32, 64, 64, 64)
 
         x2_1 = self.EnBlock2_1(x1_2)
         x2_1 = self.EnBlock2_2(x2_1)
+
         x2_2 = self.EnDown2(x2_1)  # (1, 64, 32, 32, 32)
 
         x3_1 = self.EnBlock3_1(x2_2)
         x3_1 = self.EnBlock3_2(x3_1)
+
         x3_2 = self.EnDown3(x3_1)  # (1, 128, 16, 16, 16)
 
         x4_1 = self.EnBlock4_1(x3_2)
@@ -108,12 +156,13 @@ class Unet(nn.Module):
         x4_3 = self.EnBlock4_3(x4_2)
         output = self.EnBlock4_4(x4_3)  # (1, 128, 16, 16, 16)
 
-        return x1_1,x2_1,x3_1,output
+        return x1_1, x2_1, x3_1, output
 
 
 if __name__ == '__main__':
     with torch.no_grad():
         import os
+
         os.environ['CUDA_VISIBLE_DEVICES'] = '0'
         cuda0 = torch.device('cuda:0')
         x = torch.rand((1, 4, 128, 128, 128), device=cuda0)

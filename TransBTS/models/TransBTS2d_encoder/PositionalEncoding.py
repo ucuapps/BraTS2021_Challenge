@@ -43,9 +43,6 @@ class MLPPositionalEncoding(nn.Module):
             nn.Conv3d(256, 256, kernel_size=1, bias=False),
             nn.GELU(),
             nn.BatchNorm3d(256),
-            nn.Conv3d(256, 256, kernel_size=1, bias=False),
-            nn.GELU(),
-            nn.BatchNorm3d(256),
             nn.Conv3d(256, embedding_dim, kernel_size=1, bias=True)
         )
 

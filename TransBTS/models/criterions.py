@@ -76,24 +76,25 @@ def softmax_dice2(output, target):
     return loss1 + loss2 + loss3 + loss0, 1 - loss1.data, 1 - loss2.data, 1 - loss3.data
 
 
-def softmax_diceCE(output, target, ce_weight=0.8):
+def softmax_diceCE(output, target, ce_weight=0.6):
     '''
     The dice & cross-entropy losses for using logits
     :param output: (b, num_class, d, h, w)
     :param target: (b, d, h, w)
     :return:
     '''
-    output = nn.Softmax(dim=1)(output)
+    log_output = torch.log_softmax(output, dim=1)
+    output = log_output.exp()
 
-    loss0 = Dice(output[:, 0, ...], (target == 0).float())
+    # loss0 = Dice(output[:, 0, ...], (target == 0).float())
+    loss0 = 0
     loss1 = Dice(output[:, 1, ...], (target == 1).float())
     loss2 = Dice(output[:, 2, ...], (target == 2).float())
     loss3 = Dice(output[:, 3, ...], (target == 4).float())
 
     ce_loss = nn.NLLLoss()
     target[target == 4] = 3
-    target[target >= 5] = 0 # TODO: investigate this
-    ce_output = ce_loss(torch.log(output), target)
+    ce_output = ce_loss(log_output, target)
 
     total_loss = (1 - ce_weight) * (loss0 + loss1 + loss2 + loss3) + \
                  ce_weight * ce_output

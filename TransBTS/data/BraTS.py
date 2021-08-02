@@ -108,7 +108,7 @@ class ToTensor(object):
 def transform(sample):
     trans = transforms.Compose([
         Pad(),
-        Random_rotate(),  # time-consuming
+        # Random_rotate(),  # time-consuming
         Random_Crop(),
         Random_Flip(),
         Random_intencity_shift(),

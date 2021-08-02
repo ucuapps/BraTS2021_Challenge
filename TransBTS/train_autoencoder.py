@@ -46,9 +46,9 @@ parser.add_argument('--valid_dir', default='.', type=str)
 
 parser.add_argument('--mode', default='train', type=str)
 
-parser.add_argument('--train_file', default='train.txt', type=str)
+parser.add_argument('--train_file', default='trainval.txt', type=str)
 
-parser.add_argument('--valid_file', default='valid.txt', type=str)
+parser.add_argument('--valid_file', default='dummy.txt', type=str)
 
 parser.add_argument('--dataset', default='brats', type=str)
 
@@ -93,9 +93,9 @@ parser.add_argument('--batch_size', default=2, type=int)
 
 parser.add_argument('--start_epoch', default=0, type=int)
 
-parser.add_argument('--end_epoch', default=50, type=int)
+parser.add_argument('--end_epoch', default=15, type=int)
 
-parser.add_argument('--save_freq', default=3, type=int)
+parser.add_argument('--save_freq', default=5, type=int)
 
 parser.add_argument('--grad_accum_steps', default=8, type=int)
 
@@ -121,7 +121,7 @@ def main_worker():
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    _, model = TransBTS(dataset='brats', _conv_repr=True, _pe_type="learned")
+    _, model = TransBTS(dataset='brats', _conv_repr=True, _pe_type="mlp")
 
     model.cuda(0)
     model.train()
@@ -169,6 +169,7 @@ def main_worker():
     start_time = time.time()
 
     torch.set_grad_enabled(True)
+    fp16_scaler = torch.cuda.amp.GradScaler()
 
     for epoch in range(args.start_epoch, args.end_epoch):
         setproctitle.setproctitle('{}: {}/{}'.format(args.user, epoch + 1, args.end_epoch))
@@ -180,17 +181,21 @@ def main_worker():
             x, _ = data
             x = x.cuda(0, non_blocking=True)
 
-            output = model(x)
-            loss = criterion(output, x)
+            with torch.cuda.amp.autocast(fp16_scaler is not None):
+                output = model(x)
+                loss = criterion(output, x)
 
             train_loss_history.append(loss.item())
             logging.info('Epoch: {}_Iter:{}  loss: {:.5f}'
                          .format(epoch, i, loss.item()))
 
-            loss.backward()
+            # loss.backward()
+            fp16_scaler.scale(loss).backward()
 
             if (i + 1) % args.grad_accum_steps == 0:
-                optimizer.step()
+                # optimizer.step()
+                fp16_scaler.step(optimizer)
+                fp16_scaler.update()
                 optimizer.zero_grad()
 
         with torch.no_grad():
